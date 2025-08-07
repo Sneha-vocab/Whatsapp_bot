@@ -1,5 +1,3 @@
-// utils/timeUtils.js
-
 function getTimeSlots() {
   return [
     "Morning (10-12 PM)",

@@ -1,41 +1,99 @@
-const pool = require('../db');
+const { pool } = require('../db');
+
+// Retry function for database queries
+async function retryQuery(queryFn, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await queryFn();
+    } catch (error) {
+      console.error(`Database query attempt ${i + 1} failed:`, error.message);
+      
+      // Don't retry for certain types of errors
+      if (error.code === '42P01' || error.code === '42703') {
+        // Table doesn't exist or column doesn't exist - don't retry
+        throw error;
+      }
+      
+      if (i === maxRetries - 1) {
+        throw error;
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.pow(2, i) * 1000;
+      console.log(`⏳ Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
 
 async function getAllBrands() {
   try {
-    // First try to get brands from the actual cars inventory
-    const res = await pool.query('SELECT DISTINCT make FROM cars WHERE make IS NOT NULL ORDER BY make');
+    // First try to get brands from the actual cars inventory with retry
+    const res = await retryQuery(async () => {
+      return await pool.query('SELECT DISTINCT make FROM cars WHERE make IS NOT NULL ORDER BY make');
+    });
+    
     if (res.rows.length > 0) {
-      return res.rows.map(row => row.make);
+      const brands = res.rows.map(row => row.make);
+      // Limit to 10 brands for WhatsApp list compatibility
+      return brands.slice(0, 10);
     }
   } catch (error) {
     console.error('Error fetching brands from cars table:', error);
   }
   
-  // Fallback to car_brands_models table
-  const res = await pool.query('SELECT DISTINCT brand FROM car_brands_models ORDER BY brand');
-  return res.rows.map(row => row.brand);
+  try {
+    // Fallback to car_brands_models table with retry
+    const res = await retryQuery(async () => {
+      return await pool.query('SELECT DISTINCT brand FROM car_brands_models ORDER BY brand');
+    });
+    
+    const fallbackBrands = res.rows.map(row => row.brand);
+    // Limit to 10 brands for WhatsApp list compatibility
+    return fallbackBrands.slice(0, 10);
+  } catch (error) {
+    console.error('Error fetching brands from fallback table:', error);
+    // Return default brands if both queries fail
+    return ['Hyundai', 'Maruti', 'Honda', 'Tata', 'Mahindra'];
+  }
 }
 
 async function getModelsByBrand(brand) {
   try {
-    // First try to get models from the actual cars inventory
-    const res = await pool.query('SELECT DISTINCT model FROM cars WHERE make = $1 AND model IS NOT NULL ORDER BY model', [brand]);
+    // First try to get models from the actual cars inventory with retry
+    const res = await retryQuery(async () => {
+      return await pool.query('SELECT DISTINCT model FROM cars WHERE make = $1 AND model IS NOT NULL ORDER BY model', [brand]);
+    });
+    
     if (res.rows.length > 0) {
-      return res.rows.map(row => row.model);
+      const models = res.rows.map(row => row.model);
+      // Limit to 10 models for WhatsApp list compatibility
+      return models.slice(0, 10);
     }
   } catch (error) {
     console.error('Error fetching models from cars table:', error);
   }
   
-  // Fallback to car_brands_models table
-  // Handle brand name variations (e.g., "Maruti" vs "Maruti Suzuki")
-  let fallbackBrand = brand;
-  if (brand === 'Maruti') {
-    fallbackBrand = 'Maruti Suzuki';
+  try {
+    // Fallback to car_brands_models table with retry
+    // Handle brand name variations (e.g., "Maruti" vs "Maruti Suzuki")
+    let fallbackBrand = brand;
+    if (brand === 'Maruti') {
+      fallbackBrand = 'Maruti Suzuki';
+    }
+    
+    const res = await retryQuery(async () => {
+      return await pool.query('SELECT model FROM car_brands_models WHERE brand = $1 ORDER BY model', [fallbackBrand]);
+    });
+    
+    const models = res.rows.map(row => row.model);
+    // Limit to 10 models for WhatsApp list compatibility
+    return models.slice(0, 10);
+  } catch (error) {
+    console.error('Error fetching models from fallback table:', error);
+    // Return default models if both queries fail
+    return ['City', 'Swift', 'i20', 'Nexon', 'XUV'];
   }
-  
-  const res = await pool.query('SELECT model FROM car_brands_models WHERE brand = $1 ORDER BY model', [fallbackBrand]);
-  return res.rows.map(row => row.model);
 }
 
 function formatRupees(amount) {
@@ -93,7 +151,11 @@ async function getAvailableTypes(budget) {
     console.log('🔍 Types query:', query);
     console.log('📊 Types params:', params);
     
-    const res = await pool.query(query, params);
+    // Use retry mechanism for the query
+    const res = await retryQuery(async () => {
+      return await pool.query(query, params);
+    });
+    
     const types = res.rows.map(row => row.type);
     console.log(`📈 Found ${types.length} car types with available cars:`, types);
     return types;
@@ -118,7 +180,7 @@ async function getAvailableBrands(budget, type) {
     let paramCount = 0;
     
     // Filter by type
-    if (type && type !== 'Any') {
+    if (type && type !== 'Any' && type !== 'all') {
       paramCount++;
       query += ` AND type = $${paramCount}`;
       params.push(type);
@@ -160,15 +222,30 @@ async function getAvailableBrands(budget, type) {
     console.log('🔍 Brands query:', query);
     console.log('📊 Brands params:', params);
     
-    const res = await pool.query(query, params);
+    // Use retry mechanism for the main query
+    const res = await retryQuery(async () => {
+      return await pool.query(query, params);
+    });
+    
     const brands = res.rows.map(row => row.make);
     console.log(`📈 Found ${brands.length} brands with available cars:`, brands);
-    return brands;
+    // Limit to 10 brands for WhatsApp list compatibility
+    return brands.slice(0, 10);
   } catch (error) {
     console.error('Error fetching brands:', error);
-    // Fallback to car_brands_models table
-    const res = await pool.query('SELECT DISTINCT brand FROM car_brands_models ORDER BY brand');
-    return res.rows.map(row => row.brand);
+    // Fallback to car_brands_models table with retry
+    try {
+      const res = await retryQuery(async () => {
+        return await pool.query('SELECT DISTINCT brand FROM car_brands_models ORDER BY brand');
+      });
+      const fallbackBrands = res.rows.map(row => row.brand);
+      // Limit to 10 brands for WhatsApp list compatibility
+      return fallbackBrands.slice(0, 10);
+    } catch (fallbackError) {
+      console.error('Error fetching brands from fallback table:', fallbackError);
+      // Return default brands if both queries fail
+      return ['Hyundai', 'Maruti', 'Honda', 'Tata', 'Mahindra'];
+    }
   }
 }
 
@@ -179,14 +256,14 @@ async function getCarsByFilter(budget, type, brand) {
     let paramCount = 0;
 
     // Filter by brand/make
-    if (brand && brand !== 'Any') {
+    if (brand && brand !== 'Any' && brand !== 'all') {
       paramCount++;
       query += ` AND make = $${paramCount}`;
       params.push(brand);
     }
 
     // Filter by type
-    if (type && type !== 'Any') {
+    if (type && type !== 'Any' && type !== 'all') {
       paramCount++;
       query += ` AND type = $${paramCount}`;
       params.push(type);
@@ -228,7 +305,11 @@ async function getCarsByFilter(budget, type, brand) {
     console.log('🔍 Query:', query);
     console.log('📊 Params:', params);
     
-    const res = await pool.query(query, params);
+    // Use retry mechanism for the query
+    const res = await retryQuery(async () => {
+      return await pool.query(query, params);
+    });
+    
     console.log(`📈 Found ${res.rows.length} cars matching criteria`);
     return res.rows;
   } catch (error) {

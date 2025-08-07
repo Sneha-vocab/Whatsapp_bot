@@ -1,5 +1,5 @@
 const { getAllBrands, getModelsByBrand } = require('./carData');
-const pool = require('../db');
+const { pool } = require('../db');
 
 const YEAR_OPTIONS = [
   "2024", "2023", "2022", "2021", "2020", "Older than 2020"
@@ -185,8 +185,39 @@ async function handleCarValuationStep(session, userMessage) {
 4. Instant payment if you accept our offer
 
 📞 Questions? Call: +91-9876543210
-Thank you for choosing Sherpa Hyundai! 😊`
+Thank you for choosing Sherpa Hyundai! 😊`,
+        options: ["Explore", "End Conversation"]
       };
+
+    case 'done':
+      if (userMessage === "Explore") {
+        // Reset session and go back to main menu
+        session.step = 'main_menu';
+        return {
+          message: "Great! Let's explore more options. What would you like to do?",
+          options: [
+            "🚗 Browse Used Cars",
+            "💰 Get Car Valuation", 
+            "📞 Contact Our Team",
+            "ℹ️ About Us"
+          ]
+        };
+      } else if (userMessage === "End Conversation") {
+        // End conversation with thank you note
+        session.step = 'conversation_ended';
+        return {
+          message: `Thank you for choosing Sherpa Hyundai! 🙏
+
+We appreciate your time and look forward to serving you.
+
+📞 For any queries: +91-9876543210
+📍 Visit us: 123 MG Road, Bangalore
+🌐 Website: www.sherpahyundai.com
+
+Have a great day! 😊`
+        };
+      }
+      return { message: "Something went wrong. Please try again." };
 
     default:
       return { message: "Something went wrong. Please try again." };

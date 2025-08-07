@@ -8,6 +8,21 @@ async function mainRouter(session, message) {
   const lowerMsg = message.toLowerCase();
   console.log("🧭 Incoming message:", message);
   console.log("🧠 Current session step:", session.step);
+  console.log("🔍 Debug - session.conversationEnded:", session.conversationEnded);
+
+  // Check for restart keywords that should clear the ended conversation FIRST
+  if (session.conversationEnded && (lowerMsg.includes('start') || lowerMsg.includes('begin') || lowerMsg.includes('new') || lowerMsg.includes('restart'))) {
+    delete session.conversationEnded;
+    session.step = 'main_menu';
+    console.log("🔄 Restarting conversation after end");
+    return getMainMenu();
+  }
+
+  // Check if conversation was ended - don't process further
+  if (session.conversationEnded) {
+    console.log("🔍 Debug - Conversation ended, not sending any message");
+    return null; // Return null to indicate no message should be sent
+  }
 
   // Route based on step or keywords
   if (session.step && (session.step.startsWith('valuation') || 
@@ -28,7 +43,7 @@ async function mainRouter(session, message) {
     return handleAboutUsStep(session, message);
   }
 
-  if (session.step && (session.step.startsWith('browse') || session.step === 'show_more_cars' || session.step === 'car_selected_options' || session.step.startsWith('test_drive') || session.step.startsWith('td_') || session.step === 'change_criteria_confirm')) {
+  if (session.step && (session.step.startsWith('browse') || session.step === 'show_more_cars' || session.step === 'show_more_cars_after_images' || session.step === 'car_selected_options' || session.step.startsWith('test_drive') || session.step.startsWith('td_') || session.step === 'change_criteria_confirm')) {
     console.log("➡️ Routing to: Browse Used Cars");
     return handleBrowseUsedCars(session, message);
   }
@@ -59,7 +74,7 @@ async function mainRouter(session, message) {
   }
 
   // Greet and start main menu if first message
-  if (!session.step || ['hi', 'hello', 'hey'].includes(lowerMsg)) {
+  if (!session.step || ['hi', 'hello', 'hey','hy'].includes(lowerMsg)) {
     session.step = 'main_menu';
     console.log("🔁 Resetting to main menu");
     return getMainMenu();
